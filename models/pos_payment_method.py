@@ -22,7 +22,7 @@ class PosPaymentMethod(models.Model):
     def _get_payment_terminal_selection(self):
         return super(PosPaymentMethod, self)._get_payment_terminal_selection() + [('cardano', 'Cardano')]
 
-    cardano_wallet_address = fields.Char(string="Cardano Wallet Address", help='Enter your wallet adress here. This is where customers deposit their ADA', copy=False)
+    cardano_wallet_address = fields.Char(string="Cardano Wallet Id", help='Enter your wallet id here. This is where customers deposit their ADA', copy=False)
     cardano_terminal_identifier = fields.Char(help='[Terminal model]-[Serial number], for example: P400Plus-123456789', copy=False)
     cardano_test_mode = fields.Boolean(help='Run transactions in the test environment.')
     cardano_latest_response = fields.Char(help='Technical field used to buffer the latest asynchronous notification from Cardano.', copy=False, groups='base.group_erp_manager')

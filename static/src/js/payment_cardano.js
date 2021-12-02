@@ -5,6 +5,7 @@ var core = require('web.core');
 var rpc = require('web.rpc');
 var PaymentInterface = require('point_of_sale.PaymentInterface');
 
+// For string translations
 var _t = core._t;
 
 var PaymentCardano = PaymentInterface.extend({
