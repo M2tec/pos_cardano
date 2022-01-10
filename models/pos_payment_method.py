@@ -2,10 +2,14 @@
 # Part of Odoo. See LICENSE file for full copyright and licensing details.
 import json
 import logging
-import pprint
+from pprint import pprint
 import random
 import requests
 import string
+
+from cardano.wallet import Wallet
+from cardano.wallet import WalletService
+from cardano.backends.walletrest import WalletREST
 
 from odoo import fields, models, api, _
 from odoo.exceptions import ValidationError
@@ -64,33 +68,79 @@ class PosPaymentMethod(models.Model):
         }
 
     @api.model
-    def get_latest_cardano_status(self, payment_method_id, pos_config_name, terminal_identifier, test_mode, api_key):
+    def get_latest_cardano_status(self, data):
         '''See the description of proxy_cardano_request as to why this is an
         @api.model function.
         '''
-
+        _logger.info('---Cardano get_latest_cardano_status ----')
+        print('cardano_status')
+        pprint(data)
+                
         # Poll the status of the terminal if there's no new
         # notification we received. This is done so we can quickly
         # notify the user if the terminal is no longer reachable due
         # to connectivity issues.
-        self.proxy_cardano_request(self._cardano_diagnosis_request_data(pos_config_name, terminal_identifier),
-                                 test_mode,
-                                 api_key)
 
-        payment_method = self.sudo().browse(payment_method_id)
-        latest_response = payment_method.cardano_latest_response
+        #payment_method = self.sudo().browse(payment_method_id)
+        #latest_response = payment_method.cardano_latest_response
         
         
-        latest_response = json.loads(latest_response) if latest_response else False
-        payment_method.cardano_latest_response = ''  # avoid handling old responses multiple times
+        #latest_response = json.loads(latest_response) if latest_response else False
+        #payment_method.cardano_latest_response = ''  # avoid handling old responses multiple times
 
-        return {
-            'latest_response': latest_response,
-            'last_received_diagnosis_id': payment_method.cardano_latest_diagnosis,
-        }
+        transaction_id = data["transaction_id"]
+        wallet_id = data["wallet_id"]
+        requested_amount = data["requested_amount"]        
+
+        wallet_port = 8090
+
+        print('Connecting to wallet')
+
+        wal0 = Wallet(wallet_id, backend=WalletREST(port=wallet_port))
+        wal0.sync_progress()
+        
+        wallet_balance = wal0.balance().total
+        # print('wallet balance')
+        # print(wal0.balance().total)
+        
+        tnxs = wal0.transactions()
+        
+        transact = []
+        
+        result = "not_received"
+        
+        for tnx in tnxs:
+            tnx_dict = {'id': tnx.txid, 'fee': tnx.fee, 'input': tnx.amount_in, 'output': tnx.amount_out, 'metadata': tnx.metadata, 'status' : tnx.status}
+            
+            #print(dir(tnx))
+            print('\n')
+            print(repr(tnx_dict))
+            print('\n')
+            
+            metadata = tnx.metadata
+            #print(metadata.keys())
+            
+            tx_id = ''
+            
+            try:
+                tx_id = metadata[73]['title']
+                print('tx_id: ' + str(tx_id))
+                print('transaction_id: ' + transaction_id)
+                print(': ' + transaction_id)
+                         
+                if tx_id == transaction_id and tnx.amount_in >= requested_amount:
+                    print("-------------- Success -------------")
+                    result = "success"   
+                elif tx_id == transaction_id and tnx.amount_in < requested_amount:
+                    result = "Recieved amount too low => Requested: " + requested_amount + "Recieved: " + tnx.amount_in  
+     
+            except KeyError:
+                pass
+
+        return { 'response': result }
 
     @api.model
-    def proxy_cardano_request(self, data, test_mode, api_key):
+    def request_payment(self, data):
         '''Necessary because Cardano's endpoints don't have CORS enabled. This is an
         @api.model function to avoid concurrent update errors. Cardano's
         async endpoint can still take well over a second to complete a
@@ -101,67 +151,25 @@ class PosPaymentMethod(models.Model):
         pos.payment.method.
         '''
         _logger.info('---Cardano request ----')
-         
-        _logger.info('request to cardano\n%s', pprint.pformat(data))
+        #pprint(data)
+
+        # Generate a new wallet_address from the wallet_id
+        transaction_id = data["transaction_id"]
+        wallet_id = data["wallet_id"]
+        requested_amount = data["requested_amount"]
+
+        wallet = Wallet(wallet_id, backend=WalletREST(port=8090))
+        wallet_address = str(wallet.first_unused_address())
+        #print(wallet_address)
+
+        # Send payment request to the m2_kiosk_app
+        url = "http://localhost:9090/payment-request"
+        json_data={"transaction_id": transaction_id, 
+                   "wallet_address": wallet_address, 
+                   "requested_amount": requested_amount}
+                                
+        r = requests.post(url, json.dumps(json_data))
         
-        message_category = data['SaleToPOIRequest']['MessageHeader']['MessageCategory']
-        #print("message_category = " + message_category)
-
-        def poll_allive(msg):
-
-            var = GLib.Variant("(s)", (msg,))  # Parameters should be variant.
-            ret_var = proxy.call_sync(
-                "PollAlive",  # Method name
-                var,  # Parameters for method
-                Gio.DBusCallFlags.NO_AUTO_START,  # Flags for call APIs
-                500,  # How long to wait for reply? (in milliseconds)
-                None,  # Cancellable, to cancel the call if you changed mind in middle)
-            )
-            service_id = ret_var.unpack()[0]
-            #print(service_id)
-            return service_id
-
-        def request_payment(transaction_id, wallet_address, pay_amount, service_id):
-            #print(pay_amount)
-            var = GLib.Variant("(ssss)", (transaction_id, wallet_address, str(pay_amount), service_id,))     
-            ret_var = proxy.call_sync(
-                "SetPayment", var, Gio.DBusCallFlags.NO_AUTO_START, 500, None
-            )
-            greeting = ret_var.unpack()[0]
-            #print(greeting)
-            
-        # Start dbus message bus       
-        bus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)  
-        proxy = Gio.DBusProxy.new_sync(
-            bus,
-            Gio.DBusProxyFlags.NONE,
-            None,
-            "org.m2tec.paypad",
-            "/org/m2tec/paypad",
-            "org.m2tec.paypad",
-            None,
-        )
-        
-        diagnosis_data = ""
-        
-        if message_category == "Payment":
-            _logger.info('---Payment message----')
-
-            wallet_address = api_key
-            pay_amount = data['SaleToPOIRequest']['PaymentRequest']['PaymentTransaction']['AmountsReq']['RequestedAmount']
-            transaction_id = data['SaleToPOIRequest']['PaymentRequest']['SaleData']['SaleTransactionID']['TransactionID']
-            service_id = data['SaleToPOIRequest']['MessageHeader']['ServiceID']
-
-            request_payment(transaction_id, wallet_address, pay_amount, service_id)
-                
-        elif message_category == "Diagnosis":
-            _logger.info('---Diagnosis message----')
-
-            service_id = poll_allive("hi")
- 
- 
-        #_logger.info('json_data\n%s', pprint.pformat(diagnosis_data))        
-
         return True
 
 
@@ -171,3 +179,4 @@ class PosPaymentMethod(models.Model):
         if self.use_payment_terminal != 'cardano':
             self.cardano_wallet_address = False
             self.cardano_terminal_identifier = False
+
