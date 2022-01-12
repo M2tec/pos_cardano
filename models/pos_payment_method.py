@@ -48,25 +48,6 @@ class PosPaymentMethod(models.Model):
         whitelisted_fields = set(('cardano_latest_response', 'cardano_latest_diagnosis'))
         return super(PosPaymentMethod, self)._is_write_forbidden(fields - whitelisted_fields)
 
-    def _cardano_diagnosis_request_data(self, pos_config_name, terminal_identifier):
-        service_id = ''.join(random.choices(string.ascii_letters + string.digits, k=10))
-        return {
-            "SaleToPOIRequest": {
-                "MessageHeader": {
-                    "ProtocolVersion": "3.0",
-                    "MessageClass": "Service",
-                    "MessageCategory": "Diagnosis",
-                    "MessageType": "Request",
-                    "ServiceID": service_id,
-                    "SaleID": pos_config_name,
-                    "POIID": terminal_identifier,
-                },
-                "DiagnosisRequest": {
-                    "HostDiagnosisFlag": False
-                }
-            }
-        }
-
     @api.model
     def get_latest_cardano_status(self, data):
         '''See the description of proxy_cardano_request as to why this is an
@@ -92,50 +73,124 @@ class PosPaymentMethod(models.Model):
         wallet_id = data["wallet_id"]
         requested_amount = data["requested_amount"]        
 
-        wallet_port = 8090
+        def check_payment_local_node(network_type, transaction_id, wallet_id, requested_amount):
+            wallet_port = 8090
 
-        print('Connecting to wallet')
+            print('Connecting to wallet')
 
-        wal0 = Wallet(wallet_id, backend=WalletREST(port=wallet_port))
-        wal0.sync_progress()
-        
-        wallet_balance = wal0.balance().total
-        # print('wallet balance')
-        # print(wal0.balance().total)
-        
-        tnxs = wal0.transactions()
-        
-        transact = []
-        
-        result = "not_received"
-        
-        for tnx in tnxs:
-            tnx_dict = {'id': tnx.txid, 'fee': tnx.fee, 'input': tnx.amount_in, 'output': tnx.amount_out, 'metadata': tnx.metadata, 'status' : tnx.status}
+            wal0 = Wallet(wallet_id, backend=WalletREST(port=wallet_port))
+            wal0.sync_progress()
             
-            #print(dir(tnx))
-            print('\n')
-            print(repr(tnx_dict))
-            print('\n')
+            wallet_balance = wal0.balance().total
+            # print('wallet balance')
+            # print(wal0.balance().total)
             
-            metadata = tnx.metadata
-            #print(metadata.keys())
+            tnxs = wal0.transactions()
             
-            tx_id = ''
+            transact = []
             
-            try:
-                tx_id = metadata[73]['title']
-                print('tx_id: ' + str(tx_id))
-                print('transaction_id: ' + transaction_id)
-                print(': ' + transaction_id)
-                         
-                if tx_id == transaction_id and tnx.amount_in >= requested_amount:
-                    print("-------------- Success -------------")
-                    result = "success"   
-                elif tx_id == transaction_id and tnx.amount_in < requested_amount:
-                    result = "Recieved amount too low => Requested: " + requested_amount + "Recieved: " + tnx.amount_in  
-     
-            except KeyError:
-                pass
+            result = "not_received"
+            
+            for tnx in tnxs:
+                tnx_dict = {'id': tnx.txid, 'fee': tnx.fee, 'input': tnx.amount_in, 'output': tnx.amount_out, 'metadata': tnx.metadata, 'status' : tnx.status}
+                
+                #print(dir(tnx))
+                print('\n')
+                print(repr(tnx_dict))
+                print('\n')
+                
+                metadata = tnx.metadata
+                #print(metadata.keys())
+                
+                tx_id = ''
+                
+                try:
+                    tx_id = metadata[73]['title']
+                    print('tx_id: ' + str(tx_id))
+                    print('transaction_id: ' + transaction_id)
+                    print(': ' + transaction_id)
+                             
+                    if tx_id == transaction_id and tnx.amount_in >= requested_amount:
+                        print("-------------- Success -------------")
+                        result = "success"   
+                    elif tx_id == transaction_id and tnx.amount_in < requested_amount:
+                        result = "Recieved amount too low => Requested: " + str(requested_amount) + "Recieved: " + str(tnx.amount_in)  
+         
+                except KeyError:
+                    pass
+                
+                return result 
+                
+        def check_payment_koios(network_type, transaction_id, wallet_id, requested_amount):
+                
+            wallet_address = 'addr_test1qzn58ztr9t4eaxxzg4nxr7drzfe4gpl0rkx0rjjp70q3nzwm4uhvu74emhsyrtpqpqjt0hk2mflktqrvl3dn5hym6pes9nrq8r'     
+            json_data = {"_addresses":[wallet_address]}
+
+            base_url = "https://d.koios-api." + network_type + ".dandelion.link/rpc"
+
+            url = base_url + "/address_txs"
+            print(url)
+            headers = {'Content-type': 'application/json'}                    
+            r = requests.post(url, headers=headers, json=json_data)
+            pprint((r.text))
+            
+            result = "not_received"
+            
+            json_response = json.loads(r.text)
+            
+            # Check metadata
+            for j in json_response:
+                print()
+                print("-------Hash:" + j + "--------")
+
+                json_data = {"_tx_hashes": [j]}
+
+                url = base_url + "/tx_metadata"
+                #print(url)
+                
+                headers = {'Content-type': 'application/json'}                    
+                r = requests.post(url, headers=headers, json=json_data)
+                #pprint((r.text))
+
+                json_response = json.loads(r.text)
+                metadata_title = json_response[0]['metadata']['73']['title']
+
+                print()
+                print(metadata_title)
+                print()
+                
+                if metadata_title == transaction_id:                                   
+
+                    print("-----confirm value-----")
+                    url = base_url + "/tx_utxos"
+                    headers = {'Content-type': 'application/json'}                    
+                    r = requests.post(url, headers=headers, json=json_data)
+                    
+                    tx_utxos = json.loads(r.text)
+                    
+                    utxo_output = tx_utxos[0]["outputs"]
+
+                    for u in utxo_output:
+                        payment_addr = u["payment_addr"]["bech32"]
+                        
+                        if wallet_address == payment_addr:               
+                            utxo_pay_amount = float(u["value"])/1000000
+                    
+                    print(utxo_pay_amount)
+
+                    if utxo_pay_amount >= requested_amount:
+                        result = "success"  
+                
+                #print()
+                #pprint(type(json.loads(r.text)))
+            
+                #print()
+                #print(json.dumps(tx_utxos, indent=4, sort_keys=True))
+            
+            return result     
+            
+        result = check_payment_koios('testnet', transaction_id, wallet_id, requested_amount)
+        #result = check_payment_local_node('testnet', transaction_id, wallet_id, requested_amount)
 
         return { 'response': result }
 
@@ -158,10 +213,11 @@ class PosPaymentMethod(models.Model):
         wallet_id = data["wallet_id"]
         requested_amount = data["requested_amount"]
 
-        wallet = Wallet(wallet_id, backend=WalletREST(port=8090))
-        wallet_address = str(wallet.first_unused_address())
-        #print(wallet_address)
-
+        #wallet = Wallet(wallet_id, backend=WalletREST(port=8090))
+        # wallet_address = str(wallet.first_unused_address())
+        wallet_address = 'addr_test1qzn58ztr9t4eaxxzg4nxr7drzfe4gpl0rkx0rjjp70q3nzwm4uhvu74emhsyrtpqpqjt0hk2mflktqrvl3dn5hym6pes9nrq8r'
+        # print(wallet_address)
+    
         # Send payment request to the m2_kiosk_app
         url = "http://localhost:9090/payment-request"
         json_data={"transaction_id": transaction_id, 

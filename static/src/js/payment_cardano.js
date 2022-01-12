@@ -117,7 +117,7 @@ var PaymentCardano = PaymentInterface.extend({
             method: 'get_latest_cardano_status',
             args: [data],
         }, {
-            timeout: 5000,
+            timeout: 10000,
             shadow: true,
         }).catch(function (data) {
             reject();
