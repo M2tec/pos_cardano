@@ -100,7 +100,7 @@ var PaymentCardano = PaymentInterface.extend({
             resolve(false);
             return Promise.resolve();
         }
-
+        
         console.log('_poll_for_response');
         
         var order = this.pos.get_order();
@@ -117,7 +117,7 @@ var PaymentCardano = PaymentInterface.extend({
             method: 'get_latest_cardano_status',
             args: [data],
         }, {
-            timeout: 10000,
+            timeout: 5000,
             shadow: true,
         }).catch(function (data) {
             reject();
@@ -147,7 +147,8 @@ var PaymentCardano = PaymentInterface.extend({
         
         var line = this.pos.get_order().selected_paymentline;
         line.set_payment_status('waitingCard');
-
+        this.pos.chrome.gui.current_screen.render_paymentlines();
+            
         var res = new Promise(function (resolve, reject) {
             var order = self.pos.get_order();
             var line = order.selected_paymentline;
@@ -157,7 +158,7 @@ var PaymentCardano = PaymentInterface.extend({
 
             self.polling = setInterval(function () {
                 self._poll_for_response(resolve, reject);
-            }, 3000);            
+            }, 5000);            
            
         });
 
