@@ -97,13 +97,13 @@ class PosPaymentMethod(models.Model):
         print('--- Cardano request_payment ----')
         pprint(data)
 
-        transaction_id = data["transaction_id"]
-        requested_amount = data["requested_amount"]
+        #transaction_id = data["transaction_id"]
+        #requested_amount = data["requested_amount"]
             
         # Send payment request to the m2_kiosk_app
         url = "http://localhost:9090/payment-request"
-        json_data={"transaction_id": transaction_id,                  
-                   "requested_amount": requested_amount}
+        #json_data={"transaction_id": transaction_id,                  
+        #           "requested_amount": requested_amount}
                                 
         r = requests.post(url, json.dumps(data))
         

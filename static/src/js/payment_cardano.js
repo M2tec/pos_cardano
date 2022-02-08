@@ -63,15 +63,12 @@ var PaymentCardano = PaymentInterface.extend({
         console.log('_cardano_pay');
 
         var order = this.pos.get_order();
-        var line = order.selected_paymentline;
-        
-        var data = {'sale_id': this._cardano_get_sale_id(),
-                    'transaction_id': order.uid,
-                    'wallet_id': this.payment_method.cardano_wallet_address,
-                    'requested_amount': line.amount,};        
-        console.log(data)
-        
-        return this._call_cardano(data).then(function (data) {
+        var receipt_data = order.export_for_printing();
+
+        console.log('receipt_data');
+        console.log(receipt_data);
+                
+        return this._call_cardano(receipt_data).then(function (data) {
             return self._cardano_handle_response(data);
         });
     },
